@@ -173,7 +173,8 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"💳 Оплата: *{product['name']}*\n\n"
             f"Сумма: *{product['price']} ₽*\n\n"
-            f"После оплаты гайд придёт сюда автоматически. 📥",
+            f"После оплаты гайд придёт сюда автоматически. 📥\n\n"
+            f"_Нажимая «Перейти к оплате», вы принимаете условия_ /offer",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -183,6 +184,43 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "Ошибка при создании платежа. Попробуй позже или напиши @Oksana_Kastra"
         )
+
+
+OFFER_TEXT = """📋 *ПУБЛИЧНАЯ ОФЕРТА*
+
+Продавец: Дранович Оксана Сергеевна (самозанятый)
+
+*Что продаём:* цифровые гайды в формате PDF — практические инструменты по психологии, астрологии и личностному развитию.
+
+*Оплата:* онлайн-картой через ЮКасса. После оплаты ссылка на скачивание приходит сюда автоматически.
+
+*Возврат:* цифровые продукты возврату не подлежат (ст. 26.1 ЗоЗПП, Постановление № 2463). Исключение: гайд не пришёл — пиши @Oksana\\_Kastra, решим в течение 24 часов.
+
+*Авторские права:* все материалы © Оксана Кастра, 2026. Перепродажа и передача третьим лицам запрещены.
+
+По вопросам: @Oksana\\_Kastra"""
+
+PRIVACY_TEXT = """🔐 *ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ*
+
+Оператор: Дранович Оксана Сергеевна (самозанятый)
+
+*Что собираем:* Telegram ID и username — только для доставки купленного гайда. Платёжные данные карты мы не видим — они у ЮКасса.
+
+*Не передаём* данные третьим лицам и не используем в рекламных целях.
+
+*Хранение:* сервер Railway, не более 1 года.
+
+*Хочешь удалить данные* — напиши @Oksana\\_Kastra, ответим в течение 30 дней.
+
+Закон: ФЗ-152 «О персональных данных»."""
+
+
+async def offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(OFFER_TEXT, parse_mode="Markdown")
+
+
+async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(PRIVACY_TEXT, parse_mode="Markdown")
 
 
 def run_flask():
@@ -197,6 +235,8 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("offer", offer))
+    app.add_handler(CommandHandler("privacy", privacy))
     app.add_handler(CallbackQueryHandler(catalog, pattern="^catalog$"))
     app.add_handler(CallbackQueryHandler(show_product, pattern="^product_"))
     app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
