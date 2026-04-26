@@ -81,7 +81,13 @@ async def send_product(chat_id: int, product: dict):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("📚 Каталог гайдов", callback_data="catalog")]]
+    keyboard = [
+        [InlineKeyboardButton("📚 Каталог гайдов", callback_data="catalog")],
+        [
+            InlineKeyboardButton("📋 Оферта", callback_data="show_offer"),
+            InlineKeyboardButton("🔐 Конфиденциальность", callback_data="show_privacy")
+        ]
+    ]
     await update.message.reply_text(
         "Привет! 👋\n\n"
         "Здесь ты найдёшь практические гайды и чек-листы по психологии, астрологии и здоровью.\n\n"
@@ -223,6 +229,18 @@ async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(PRIVACY_TEXT, parse_mode="Markdown")
 
 
+async def show_offer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(OFFER_TEXT, parse_mode="Markdown")
+
+
+async def show_privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(PRIVACY_TEXT, parse_mode="Markdown")
+
+
 def run_flask():
     port = int(os.getenv("PORT", 8080))
     flask_app.run(host="0.0.0.0", port=port)
@@ -238,6 +256,8 @@ def main():
     app.add_handler(CommandHandler("offer", offer))
     app.add_handler(CommandHandler("privacy", privacy))
     app.add_handler(CallbackQueryHandler(catalog, pattern="^catalog$"))
+    app.add_handler(CallbackQueryHandler(show_offer_callback, pattern="^show_offer$"))
+    app.add_handler(CallbackQueryHandler(show_privacy_callback, pattern="^show_privacy$"))
     app.add_handler(CallbackQueryHandler(show_product, pattern="^product_"))
     app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
 
