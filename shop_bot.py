@@ -319,7 +319,13 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }, str(uuid.uuid4()))
 
         pay_url = payment.confirmation.confirmation_url
-        offer_line = f"\n_Нажимая «Перейти к оплате», вы принимаете [условия оферты]({offer_url})_" if offer_url else ""
+        privacy_url = f"{BASE_URL}/privacy" if BASE_URL else None
+        if offer_url and privacy_url:
+            offer_line = f"\n_Нажимая «Перейти к оплате», вы принимаете [условия оферты]({offer_url}) и соглашаетесь с [политикой конфиденциальности]({privacy_url})_"
+        elif offer_url:
+            offer_line = f"\n_Нажимая «Перейти к оплате», вы принимаете [условия оферты]({offer_url})_"
+        else:
+            offer_line = ""
 
         keyboard = [
             [InlineKeyboardButton("💳 Перейти к оплате", url=pay_url)],
