@@ -112,7 +112,7 @@ PRIVACY_HTML = """<!DOCTYPE html>
 <p>Сервер Railway (ЕС). Срок хранения — не более 1 года с момента последней покупки.</p>
 
 <h2>Ваши права</h2>
-<p>Хотите удалить данные — напишите <a href="https://t.me/Oksana_Kastra">@Oksana_Kastra</a>, ответим в течение 30 дней.</p>
+<p>Хотите удалить данные — напишите <a href="https://t.me/Oksana_Kastra">@Oksana_Kastra</a> или на <a href="mailto:oksadran@yandex.ru">oksadran@yandex.ru</a>, ответим в течение 30 дней.</p>
 
 <h2>Правовая основа</h2>
 <p>ФЗ-152 «О персональных данных».</p>
