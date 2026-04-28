@@ -144,42 +144,45 @@ def send_telegram_message(chat_id: int, text: str):
 
 @flask_app.route("/yookassa_webhook", methods=["POST"])
 def yookassa_webhook():
-    data = request.json
-    logger.info(f"Webhook получен: {data}")
-    if not data:
+    try:
+        data = request.get_json(force=True, silent=True)
+        logger.info(f"Webhook получен: {data}")
+        if not data:
+            return jsonify({"status": "ok"})
+
+        if data.get("event") == "payment.succeeded":
+            obj = data.get("object", {})
+            metadata = obj.get("metadata", {})
+            chat_id = metadata.get("chat_id")
+            product_id = metadata.get("product_id")
+            logger.info(f"Оплата: chat_id={chat_id}, product_id={product_id}")
+
+            if chat_id and product_id:
+                product = PRODUCTS.get(product_id)
+                if product:
+                    file_url = product.get("file_url")
+                    if file_url:
+                        text = (
+                            "✅ Оплата прошла!\n\n"
+                            f"📄 *{product['name']}*\n\n"
+                            f"📥 Скачать гайд:\n{file_url}\n\n"
+                            "Благодарю за доверие 🙏\n"
+                            "Если будут вопросы — пиши @Oksana\\_Kastra"
+                        )
+                    else:
+                        text = "✅ Оплата прошла! Гайд скоро пришлём — в течение 24 часов."
+                    send_telegram_message(int(chat_id), text)
+
+                    if OWNER_CHAT_ID:
+                        send_telegram_message(
+                            int(OWNER_CHAT_ID),
+                            f"💰 Новая покупка!\nГайд: {product['name']}\nПокупатель: {chat_id}"
+                        )
+
         return jsonify({"status": "ok"})
-
-    if data.get("event") == "payment.succeeded":
-        obj = data.get("object", {})
-        metadata = obj.get("metadata", {})
-        chat_id = metadata.get("chat_id")
-        product_id = metadata.get("product_id")
-        logger.info(f"Оплата: chat_id={chat_id}, product_id={product_id}")
-
-        if chat_id and product_id:
-            product = PRODUCTS.get(product_id)
-            if product:
-                file_url = product.get("file_url")
-                if file_url:
-                    text = (
-                        f"✅ Оплата прошла!\n\n"
-                        f"📄 *{product['name']}*\n\n"
-                        f"📥 Скачать гайд:\n{file_url}\n\n"
-                        f"Благодарю за доверие 🙏\n"
-                        f"Если будут вопросы — пиши @Oksana\\_Kastra"
-                    )
-                else:
-                    text = "✅ Оплата прошла! Гайд скоро пришлём — в течение 24 часов."
-                send_telegram_message(int(chat_id), text)
-
-                # Уведомить владельца
-                if OWNER_CHAT_ID:
-                    send_telegram_message(
-                        int(OWNER_CHAT_ID),
-                        f"💰 Новая покупка!\n\nГайд: {product['name']}\nПокупатель chat\\_id: {chat_id}"
-                    )
-
-    return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return jsonify({"status": "error", "detail": str(e)}), 200
 
 
 @flask_app.route("/health", methods=["GET"])
