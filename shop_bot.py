@@ -2,6 +2,7 @@ import os
 import logging
 import threading
 import uuid
+import requests as http_requests
 from flask import Flask, request, jsonify, Response
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -131,9 +132,8 @@ def privacy_page():
 
 
 def send_telegram_message(chat_id: int, text: str):
-    import requests as req
     try:
-        req.post(
+        http_requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
             timeout=10
