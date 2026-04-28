@@ -78,7 +78,8 @@ OFFER_HTML = """<!DOCTYPE html>
 <p>Оферта регулируется законодательством Российской Федерации. Все споры решаются путём переговоров, при недостижении согласия — в суде по месту нахождения продавца.</p>
 
 <h2>Контакт</h2>
-<p><a href="https://t.me/Oksana_Kastra">@Oksana_Kastra</a></p>
+<p>Telegram: <a href="https://t.me/Oksana_Kastra">@Oksana_Kastra</a><br>
+Email: <a href="mailto:oksadran@yandex.ru">oksadran@yandex.ru</a></p>
 
 <p style="color:#999; font-size:0.9em; margin-top:2em;">Оферта действует с 26 апреля 2026 г.</p>
 </body>
