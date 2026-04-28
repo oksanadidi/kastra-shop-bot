@@ -178,7 +178,7 @@ async def send_product(chat_id: int, product: dict):
 
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
-        [["📚 Каталог гайдов"], ["📋 Оферта", "🔐 Конфиденциальность"]],
+        [["📚 Каталог гайдов"], ["📋 Оферта", "🔐 Конфиденциальность"], ["▶️ Главное меню"]],
         resize_keyboard=True
     )
 
@@ -238,6 +238,14 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Политика конфиденциальности:", reply_markup=kb)
         else:
             await update.message.reply_text(PRIVACY_TEXT, parse_mode="Markdown")
+    elif text == "▶️ Главное меню":
+        await start(update, context)
+    else:
+        # Любое другое сообщение — показать меню
+        await update.message.reply_text(
+            "Выбери раздел 👇",
+            reply_markup=get_main_keyboard()
+        )
 
 
 async def show_catalog_message(message):
