@@ -130,9 +130,22 @@ def privacy_page():
     return Response(PRIVACY_HTML, mimetype="text/html; charset=utf-8")
 
 
+def send_telegram_message(chat_id: int, text: str):
+    import requests as req
+    try:
+        req.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+            timeout=10
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки сообщения: {e}")
+
+
 @flask_app.route("/yookassa_webhook", methods=["POST"])
 def yookassa_webhook():
     data = request.json
+    logger.info(f"Webhook получен: {data}")
     if not data:
         return jsonify({"status": "ok"})
 
@@ -141,12 +154,30 @@ def yookassa_webhook():
         metadata = obj.get("metadata", {})
         chat_id = metadata.get("chat_id")
         product_id = metadata.get("product_id")
+        logger.info(f"Оплата: chat_id={chat_id}, product_id={product_id}")
 
         if chat_id and product_id:
             product = PRODUCTS.get(product_id)
             if product:
-                import asyncio
-                asyncio.run(send_product(int(chat_id), product))
+                file_url = product.get("file_url")
+                if file_url:
+                    text = (
+                        f"✅ Оплата прошла!\n\n"
+                        f"📄 *{product['name']}*\n\n"
+                        f"📥 Скачать гайд:\n{file_url}\n\n"
+                        f"Благодарю за доверие 🙏\n"
+                        f"Если будут вопросы — пиши @Oksana\\_Kastra"
+                    )
+                else:
+                    text = "✅ Оплата прошла! Гайд скоро пришлём — в течение 24 часов."
+                send_telegram_message(int(chat_id), text)
+
+                # Уведомить владельца
+                if OWNER_CHAT_ID:
+                    send_telegram_message(
+                        int(OWNER_CHAT_ID),
+                        f"💰 Новая покупка!\n\nГайд: {product['name']}\nПокупатель chat\\_id: {chat_id}"
+                    )
 
     return jsonify({"status": "ok"})
 
