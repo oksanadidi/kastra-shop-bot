@@ -40,8 +40,33 @@ PRODUCTS = {
         "description": "Пошаговая инструкция как провести 12 дней после дня рождения.\nКаждый день закладывает один месяц твоей жизни.\nЗнай что делать — и запусти именно тот год, который хочешь.",
         "price": 490,
         "file_url": os.getenv("FILE_SOLYAR_12")
+    },
+    "guide_investments": {
+        "name": "5 инвестиций в своё восстановление",
+        "description": "Ты вкладываешь всё в работу, семью, отношения — и ничего не остаётся для себя.\n5 вложений, которые возвращают ресурс без усилий и лишнего времени.\nPDF, 8 слайдов. Читать 10 минут. Начать сегодня вечером.",
+        "price": 499,
+        "file_url": "https://disk.yandex.ru/i/7CEkK0ILykYWow",
+        "yadisk": True
     }
 }
+
+
+def resolve_file_url(product: dict) -> str:
+    """Если у товара yadisk=True — получаем свежую прямую ссылку через Яндекс API."""
+    if not product.get("yadisk"):
+        return product.get("file_url", "")
+    public_key = product.get("file_url", "")
+    try:
+        resp = http_requests.get(
+            "https://cloud-api.yandex.net/v1/disk/public/resources/download",
+            params={"public_key": public_key},
+            timeout=10
+        )
+        resp.raise_for_status()
+        return resp.json().get("href", public_key)
+    except Exception as e:
+        logger.error(f"Ошибка получения ссылки Яндекс.Диска: {e}")
+        return public_key
 
 flask_app = Flask(__name__)
 telegram_app = None
@@ -166,7 +191,7 @@ def yookassa_webhook():
             if chat_id and product_id:
                 product = PRODUCTS.get(product_id)
                 if product:
-                    file_url = product.get("file_url")
+                    file_url = resolve_file_url(product)
                     if file_url:
                         text = (
                             "✅ Оплата прошла!\n\n"
@@ -205,7 +230,7 @@ def health():
 async def send_product(chat_id: int, product: dict):
     from telegram import Bot
     bot = Bot(token=BOT_TOKEN)
-    file_url = product.get("file_url")
+    file_url = resolve_file_url(product)
     if file_url:
         await bot.send_message(
             chat_id=chat_id,
