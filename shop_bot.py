@@ -1,50 +1,45 @@
 import os
 import logging
 import threading
-import uuid
 import requests as http_requests
 from flask import Flask, request, jsonify, Response
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardMarkup, BotCommand
+    ReplyKeyboardMarkup, LabeledPrice
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    ContextTypes, MessageHandler, filters
+    ContextTypes, MessageHandler, PreCheckoutQueryHandler, filters
 )
-from yookassa import Configuration, Payment
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("SHOP_BOT_TOKEN")
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET = os.getenv("YOOKASSA_SECRET")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
-
-Configuration.account_id = YOOKASSA_SHOP_ID
-Configuration.secret_key = YOOKASSA_SECRET
 
 RAILWAY_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
 BASE_URL = f"https://{RAILWAY_DOMAIN}" if RAILWAY_DOMAIN else ""
 
+# Цены в Telegram Stars (1 Star ≈ $0.013-0.02)
+# 500 Stars ≈ 490-550 руб по текущему курсу
 PRODUCTS = {
     "guide_body_map": {
         "name": "Карта ощущений: где в теле живёт твоя тревога",
-        "description": "Практический гайд 10 страниц.\nУпражнения, чек-листы, дыхательная практика.\nНайди где живёт твой страх — и тревога потеряет силу.",
-        "price": 490,
+        "description": "Практический гайд 10 страниц. Упражнения, чек-листы, дыхательная практика. Найди где живёт твой страх — и тревога потеряет силу.",
+        "stars": 500,
         "file_url": os.getenv("FILE_BODY_MAP")
     },
     "guide_solyar_12": {
         "name": "12 дней, которые решают год",
-        "description": "Пошаговая инструкция как провести 12 дней после дня рождения.\nКаждый день закладывает один месяц твоей жизни.\nЗнай что делать — и запусти именно тот год, который хочешь.",
-        "price": 490,
+        "description": "Пошаговая инструкция как провести 12 дней после дня рождения. Каждый день закладывает один месяц твоей жизни. Знай что делать — и запусти именно тот год, который хочешь.",
+        "stars": 500,
         "file_url": os.getenv("FILE_SOLYAR_12")
     },
     "guide_investments": {
         "name": "5 инвестиций в своё восстановление",
-        "description": "Сон — важнейший фундамент восстановления.\n5 шагов как нормализовать сон и получить больше энергии на дела, эмоции, любовь и перемены.\nPDF, 10 слайдов. Начать можно сегодня вечером.",
-        "price": 499,
+        "description": "Сон — важнейший фундамент восстановления. 5 шагов как нормализовать сон и получить больше энергии на дела, эмоции, любовь и перемены. PDF, 10 слайдов. Начать можно сегодня вечером.",
+        "stars": 500,
         "file_url": "https://disk.yandex.ru/i/7CEkK0ILykYWow",
         "yadisk": True
     }
@@ -52,7 +47,6 @@ PRODUCTS = {
 
 
 def resolve_file_url(product: dict) -> str:
-    """Если у товара yadisk=True — получаем свежую прямую ссылку через Яндекс API."""
     if not product.get("yadisk"):
         return product.get("file_url", "")
     public_key = product.get("file_url", "")
@@ -68,8 +62,8 @@ def resolve_file_url(product: dict) -> str:
         logger.error(f"Ошибка получения ссылки Яндекс.Диска: {e}")
         return public_key
 
+
 flask_app = Flask(__name__)
-telegram_app = None
 
 OFFER_HTML = """<!DOCTYPE html>
 <html lang="ru">
@@ -91,7 +85,7 @@ OFFER_HTML = """<!DOCTYPE html>
 <p>Цифровые гайды в формате PDF — практические инструменты по психологии, астрологии и личностному развитию.</p>
 
 <h2>Оплата</h2>
-<p>Онлайн-картой через сервис ЮКасса. После успешной оплаты ссылка на скачивание приходит в Telegram-бот автоматически.</p>
+<p>Оплата производится через Telegram Stars — официальную платёжную систему Telegram. После успешной оплаты ссылка на скачивание приходит в бот автоматически.</p>
 
 <h2>Возврат</h2>
 <p>Цифровые продукты возврату не подлежат (ст. 26.1 ЗоЗПП, Постановление № 2463).<br>
@@ -101,19 +95,16 @@ OFFER_HTML = """<!DOCTYPE html>
 <p>Все материалы © Оксана Кастра, 2026. Перепродажа и передача третьим лицам запрещены.</p>
 
 <h2>Срок исполнения</h2>
-<p>Ссылка на скачивание гайда направляется покупателю автоматически в течение 5 минут после подтверждения оплаты. В случае технического сбоя — в течение 24 часов после обращения к продавцу.</p>
+<p>Ссылка на скачивание гайда направляется автоматически в течение 5 минут после оплаты. В случае технического сбоя — в течение 24 часов после обращения к продавцу.</p>
 
 <h2>Акцепт оферты</h2>
-<p>Нажатие кнопки «Перейти к оплате» означает полное согласие с условиями настоящей оферты.</p>
-
-<h2>Применимое право и споры</h2>
-<p>Оферта регулируется законодательством Российской Федерации. Все споры решаются путём переговоров, при недостижении согласия — в суде по месту нахождения продавца.</p>
+<p>Нажатие кнопки оплаты в Telegram означает полное согласие с условиями настоящей оферты.</p>
 
 <h2>Контакт</h2>
 <p>Telegram: <a href="https://t.me/Oksana_Kastra">@Oksana_Kastra</a><br>
 Email: <a href="mailto:oksadran@yandex.ru">oksadran@yandex.ru</a></p>
 
-<p style="color:#999; font-size:0.9em; margin-top:2em;">Оферта действует с 26 апреля 2026 г.</p>
+<p style="color:#999; font-size:0.9em; margin-top:2em;">Оферта действует с 15 мая 2026 г.</p>
 </body>
 </html>"""
 
@@ -134,11 +125,10 @@ PRIVACY_HTML = """<!DOCTYPE html>
 <p><strong>Оператор:</strong> Дранович Оксана Владимировна (самозанятый), ИНН: 143500361802</p>
 
 <h2>Что собираем</h2>
-<p>Telegram ID и username — только для доставки купленного гайда.<br>
-Платёжные данные карты мы не видим — они обрабатываются ЮКасса.</p>
+<p>Telegram ID и username — только для доставки купленного гайда. Платёжные данные обрабатываются Telegram.</p>
 
 <h2>Как используем</h2>
-<p>Исключительно для доставки приобретённых материалов. Не передаём данные третьим лицам, не используем в рекламных целях.</p>
+<p>Исключительно для доставки приобретённых материалов. Не передаём данные третьим лицам.</p>
 
 <h2>Хранение</h2>
 <p>Сервер Railway (ЕС). Срок хранения — не более 1 года с момента последней покупки.</p>
@@ -162,92 +152,9 @@ def privacy_page():
     return Response(PRIVACY_HTML, mimetype="text/html; charset=utf-8")
 
 
-def send_telegram_message(chat_id: int, text: str):
-    try:
-        http_requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=10
-        )
-    except Exception as e:
-        logger.error(f"Ошибка отправки сообщения: {e}")
-
-
-@flask_app.route("/yookassa_webhook", methods=["POST"])
-def yookassa_webhook():
-    try:
-        data = request.get_json(force=True, silent=True)
-        logger.info(f"Webhook получен: {data}")
-        if not data:
-            return jsonify({"status": "ok"})
-
-        if data.get("event") == "payment.succeeded":
-            obj = data.get("object", {})
-            metadata = obj.get("metadata", {})
-            chat_id = metadata.get("chat_id")
-            product_id = metadata.get("product_id")
-            logger.info(f"Оплата: chat_id={chat_id}, product_id={product_id}")
-
-            if chat_id and product_id:
-                product = PRODUCTS.get(product_id)
-                if product:
-                    file_url = resolve_file_url(product)
-                    if file_url:
-                        text = (
-                            "✅ Оплата прошла!\n\n"
-                            f"📄 *{product['name']}*\n\n"
-                            f"📥 Скачать гайд:\n{file_url}\n\n"
-                            "Благодарю за доверие 🙏\n"
-                            "Если будут вопросы — пиши @Oksana\\_Kastra"
-                        )
-                    else:
-                        text = "✅ Оплата прошла! Гайд скоро пришлём — в течение 24 часов."
-                    send_telegram_message(int(chat_id), text)
-
-                    if OWNER_CHAT_ID:
-                        send_telegram_message(
-                            int(OWNER_CHAT_ID),
-                            f"💰 Новая покупка!\nГайд: {product['name']}\nПокупатель: {chat_id}"
-                        )
-
-        return jsonify({"status": "ok"})
-    except Exception as e:
-        logger.error(f"Webhook error: {e}", exc_info=True)
-        return jsonify({"status": "error", "detail": str(e)}), 200
-
-
-@flask_app.route("/health", methods=["GET"])
+@flask_app.route("/health")
 def health():
-    return jsonify({
-        "status": "ok",
-        "yookassa_shop_id": bool(YOOKASSA_SHOP_ID),
-        "yookassa_secret": bool(YOOKASSA_SECRET),
-        "bot_token": bool(BOT_TOKEN),
-        "base_url": BASE_URL
-    })
-
-
-async def send_product(chat_id: int, product: dict):
-    from telegram import Bot
-    bot = Bot(token=BOT_TOKEN)
-    file_url = resolve_file_url(product)
-    if file_url:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=(
-                f"✅ Оплата прошла!\n\n"
-                f"📄 *{product['name']}*\n\n"
-                f"📥 Скачать гайд:\n{file_url}\n\n"
-                f"Благодарю за доверие 🙏\n"
-                f"Если будут вопросы — пиши @Oksana_Kastra"
-            ),
-            parse_mode="Markdown"
-        )
-    else:
-        await bot.send_message(
-            chat_id=chat_id,
-            text="✅ Оплата прошла! Гайд скоро пришлём — в течение 24 часов."
-        )
+    return jsonify({"status": "ok", "bot_token": bool(BOT_TOKEN)})
 
 
 def get_main_keyboard():
@@ -274,7 +181,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! 👋\n\n"
         "Здесь ты найдёшь практические гайды и чек-листы по психологии, астрологии и здоровью.\n\n"
-        "Каждый гайд — инструмент для работы с собой. Купил один раз — работаешь всегда.",
+        "Каждый гайд — инструмент для работы с собой. Купил один раз — работаешь всегда.\n\n"
+        "💫 Оплата через Telegram Stars.",
         reply_markup=get_main_keyboard()
     )
 
@@ -303,30 +211,22 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if url:
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть оферту", url=url)]])
             await update.message.reply_text("Публичная оферта:", reply_markup=kb)
-        else:
-            await update.message.reply_text(OFFER_TEXT, parse_mode="Markdown")
     elif text == "🔐 Конфиденциальность":
         url = f"{BASE_URL}/privacy" if BASE_URL else None
         if url:
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть политику", url=url)]])
             await update.message.reply_text("Политика конфиденциальности:", reply_markup=kb)
-        else:
-            await update.message.reply_text(PRIVACY_TEXT, parse_mode="Markdown")
     elif text == "▶️ Главное меню":
         await start(update, context)
     else:
-        # Любое другое сообщение — показать меню
-        await update.message.reply_text(
-            "Выбери раздел 👇",
-            reply_markup=get_main_keyboard()
-        )
+        await update.message.reply_text("Выбери раздел 👇", reply_markup=get_main_keyboard())
 
 
 async def show_catalog_message(message):
     keyboard = []
     for product_id, product in PRODUCTS.items():
         keyboard.append([InlineKeyboardButton(
-            f"{product['name']} — {product['price']} ₽",
+            f"{product['name']} — {product['stars']} ⭐",
             callback_data=f"product_{product_id}"
         )])
     await message.reply_text("Выбери гайд 👇", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -338,7 +238,7 @@ async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for product_id, product in PRODUCTS.items():
         keyboard.append([InlineKeyboardButton(
-            f"{product['name']} — {product['price']} ₽",
+            f"{product['name']} — {product['stars']} ⭐",
             callback_data=f"product_{product_id}"
         )])
     await query.edit_message_text("Выбери гайд 👇", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -353,11 +253,11 @@ async def show_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Гайд не найден.")
         return
     keyboard = [
-        [InlineKeyboardButton("💳 Купить", callback_data=f"buy_{product_id}")],
+        [InlineKeyboardButton(f"⭐ Купить за {product['stars']} Stars", callback_data=f"buy_{product_id}")],
         [InlineKeyboardButton("← Назад", callback_data="catalog")]
     ]
     await query.edit_message_text(
-        f"📄 *{product['name']}*\n\n{product['description']}\n\n💰 Цена: *{product['price']} ₽*",
+        f"📄 *{product['name']}*\n\n{product['description']}\n\n💫 Цена: *{product['stars']} Telegram Stars*",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
@@ -373,47 +273,24 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_id = query.message.chat_id
-    offer_url = f"{BASE_URL}/offer" if BASE_URL else None
 
     try:
-        payment = Payment.create({
-            "amount": {"value": f"{product['price']}.00", "currency": "RUB"},
-            "confirmation": {"type": "redirect", "return_url": "https://t.me/kastra_shop_bot"},
-            "description": product["name"],
-            "metadata": {"chat_id": str(chat_id), "product_id": product_id},
-            "capture": True
-        }, str(uuid.uuid4()))
-
-        pay_url = payment.confirmation.confirmation_url
-        privacy_url = f"{BASE_URL}/privacy" if BASE_URL else None
-        if offer_url and privacy_url:
-            offer_line = f"\n_Нажимая «Перейти к оплате», вы принимаете [условия оферты]({offer_url}) и соглашаетесь с [политикой конфиденциальности]({privacy_url})_"
-        elif offer_url:
-            offer_line = f"\n_Нажимая «Перейти к оплате», вы принимаете [условия оферты]({offer_url})_"
-        else:
-            offer_line = ""
-
-        keyboard = [
-            [InlineKeyboardButton("💳 Перейти к оплате", url=pay_url)],
-            [InlineKeyboardButton("← Назад", callback_data=f"product_{product_id}")]
-        ]
-        await query.edit_message_text(
-            f"💳 Оплата: *{product['name']}*\n\nСумма: *{product['price']} ₽*\n\n"
-            f"После оплаты гайд придёт сюда автоматически. 📥{offer_line}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
+        await context.bot.send_invoice(
+            chat_id=chat_id,
+            title=product["name"],
+            description=product["description"],
+            payload=product_id,
+            currency="XTR",
+            prices=[LabeledPrice(label=product["name"], amount=product["stars"])],
+            provider_token=""
         )
-
     except Exception as e:
-        logger.error(f"Ошибка создания платежа: {e}")
-        # Уведомить владельца с реальной ошибкой
+        logger.error(f"Ошибка создания инвойса Stars: {e}")
         if OWNER_CHAT_ID:
             try:
-                from telegram import Bot
-                bot = Bot(token=BOT_TOKEN)
-                await bot.send_message(
+                await context.bot.send_message(
                     chat_id=OWNER_CHAT_ID,
-                    text=f"⚠️ Ошибка платежа в магазине:\n\n{e}"
+                    text=f"⚠️ Ошибка инвойса Stars:\n\n{e}"
                 )
             except Exception:
                 pass
@@ -422,33 +299,60 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-OFFER_TEXT = """📋 *ПУБЛИЧНАЯ ОФЕРТА*
+async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.pre_checkout_query
+    await query.answer(ok=True)
 
-Продавец: Дранович Оксана Владимировна (самозанятый)
 
-*Что продаём:* цифровые гайды в формате PDF.
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    payment = update.message.successful_payment
+    product_id = payment.invoice_payload
+    chat_id = update.message.chat_id
 
-*Оплата:* онлайн-картой через ЮКасса. После оплаты ссылка на скачивание приходит автоматически.
+    product = PRODUCTS.get(product_id)
+    if not product:
+        await update.message.reply_text("Оплата получена! Гайд скоро пришлём — в течение 24 часов.")
+        return
 
-*Возврат:* цифровые продукты возврату не подлежат (ст. 26.1 ЗоЗПП). Исключение: гайд не пришёл — пиши @Oksana\\_Kastra.
+    file_url = resolve_file_url(product)
+    if file_url:
+        await update.message.reply_text(
+            f"✅ Оплата прошла!\n\n"
+            f"📄 *{product['name']}*\n\n"
+            f"📥 Скачать гайд:\n{file_url}\n\n"
+            f"Благодарю за доверие 🙏\n"
+            f"Если будут вопросы — пиши @Oksana\\_Kastra",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text("✅ Оплата прошла! Гайд пришлём в течение 24 часов.")
 
-*Авторские права:* © Оксана Кастра, 2026. Перепродажа запрещена.
+    if OWNER_CHAT_ID:
+        try:
+            await context.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=f"⭐ Новая покупка!\nГайд: {product['name']}\nПокупатель: {chat_id}\nStars: {payment.total_amount}"
+            )
+        except Exception:
+            pass
 
-По вопросам: @Oksana\\_Kastra"""
 
-PRIVACY_TEXT = """🔐 *ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ*
+async def show_offer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    url = f"{BASE_URL}/offer" if BASE_URL else None
+    if url:
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть оферту", url=url)]])
+        await query.edit_message_text("Публичная оферта:", reply_markup=kb)
 
-Оператор: Дранович Оксана Владимировна (самозанятый)
 
-*Что собираем:* Telegram ID и username — только для доставки гайда. Платёжные данные карты мы не видим.
-
-*Не передаём* данные третьим лицам и не используем в рекламных целях.
-
-*Хранение:* сервер Railway, не более 1 года.
-
-*Удалить данные* — напиши @Oksana\\_Kastra.
-
-Закон: ФЗ-152 «О персональных данных»."""
+async def show_privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    url = f"{BASE_URL}/privacy" if BASE_URL else None
+    if url:
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть политику", url=url)]])
+        await query.edit_message_text("Политика конфиденциальности:", reply_markup=kb)
 
 
 async def offer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -456,8 +360,6 @@ async def offer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if url:
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть оферту", url=url)]])
         await update.message.reply_text("Публичная оферта:", reply_markup=kb)
-    else:
-        await update.message.reply_text(OFFER_TEXT, parse_mode="Markdown")
 
 
 async def privacy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -465,27 +367,21 @@ async def privacy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if url:
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть политику", url=url)]])
         await update.message.reply_text("Политика конфиденциальности:", reply_markup=kb)
-    else:
-        await update.message.reply_text(PRIVACY_TEXT, parse_mode="Markdown")
 
 
-async def show_offer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text(OFFER_TEXT, parse_mode="Markdown")
-
-
-async def show_privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text(PRIVACY_TEXT, parse_mode="Markdown")
+async def paysupport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "По вопросам оплаты пишите @Oksana_Kastra — ответим в течение 24 часов."
+    )
 
 
 async def post_init(application: Application):
+    from telegram import BotCommand
     await application.bot.set_my_commands([
         BotCommand("start", "Главное меню"),
         BotCommand("offer", "Публичная оферта"),
         BotCommand("privacy", "Политика конфиденциальности"),
+        BotCommand("paysupport", "Вопросы по оплате"),
     ])
 
 
@@ -503,14 +399,17 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("offer", offer_cmd))
     app.add_handler(CommandHandler("privacy", privacy_cmd))
+    app.add_handler(CommandHandler("paysupport", paysupport_cmd))
     app.add_handler(CallbackQueryHandler(catalog, pattern="^catalog$"))
     app.add_handler(CallbackQueryHandler(show_offer_callback, pattern="^show_offer$"))
     app.add_handler(CallbackQueryHandler(show_privacy_callback, pattern="^show_privacy$"))
     app.add_handler(CallbackQueryHandler(show_product, pattern="^product_"))
     app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_text))
 
-    logger.info("Магазин запущен")
+    logger.info("Магазин запущен (Telegram Stars)")
     app.run_polling()
 
 
